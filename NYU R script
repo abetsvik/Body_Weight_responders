@@ -1,0 +1,530 @@
+## settings
+BirthMode_color = c("VF"="#377EB8", "CSR"="#4DAF4A", "CS"="#E41A1C", "VD"="#810f7c")
+responder_color = c("Responder"="#d95f0e", "Nonresponder"="gray50")
+Sex_labs = c("F" = "Female", "M" = "Male")
+
+# set path
+path_rec = "~/Dropbox/Student Abe Tsvik/CSR Mice - Body Weight/Metadata Files/BodyWeight-KeithCSR-jw-02262021.xlsx"
+temp_out = "~/Dropbox/Student Abe Tsvik/CSR Mice - Body Weight/Figures/"
+
+#read the origial data using read_excel from package(readxl)
+BW <- read_excel("~/Dropbox/Student Abe Tsvik/CSR Mice - Body Weight/Metadata Files/BodyWeight-KeithCSR-jw-02262021.xlsx", sheet = "BodyWeight-Clean",range = "A2:W203")
+
+#transform the data into longer form like the IFNH data
+BW = BW %>% select(-c("...9","...10")) %>% 
+  #pivot_longer can transform your data
+  pivot_longer(cols = Week_3:Week_15, names_to = "Week", values_to = "Weight_g") %>% 
+  #make other variables the same name as in IFNH
+  mutate(BirthMode = str_extract(Birthmode_Family,"[:alpha:]+")) %>%
+  mutate(TimePoint_Weeks = as.integer(str_extract(Week,"[:digit:]+"))) %>% 
+  rename(MouseID = SubjectID) %>%
+  #exclude sex = x
+  filter(Sex!="X") %>%
+  filter(!is.na(Weight_g))
+BW$BirthMode = factor(BW$BirthMode, levels = c("CS", "CSR","VF","VD"))
+
+#since we made the names the same as in IFNH, we can use code from that to plot. Here is an example, other plot you can check the master code on github
+BW_sum <- BW %>% group_by(TimePoint_Weeks, BirthMode, Sex) %>% 
+  summarise(N = n(),
+            N_family = unique(FamilyID) %>% length(),
+            Mean = mean(Weight_g, na.rm = T), 
+            SE = sd(Weight_g, na.rm = T)/sqrt(N),
+            SD = sd(Weight_g, na.rm = T),
+            boot.lo = smean.cl.boot(Weight_g, conf.int = .95, B = 1000, na.rm = T, reps = F)[2],
+            boot.hi = smean.cl.boot(Weight_g, conf.int = .95, B = 1000, na.rm = T, reps = F)[3],
+SD_hi = Mean+1.5*SD, 
+SD_lo = Mean-1.5*SD) 
+
+
+#PLOT BW in 95% CI
+p = ggplot(BW, aes(x = TimePoint_Weeks, color = BirthMode)) +
+  geom_point(aes(y = Weight_g), size = 0.7, alpha = 0.7) +
+  geom_path(aes(y = Weight_g , group = MouseID), size = 0.3, alpha = 0.3) + 
+  geom_ribbon(data = BW_sum, alpha = 0.3, size = 0.1,
+              aes(x = TimePoint_Weeks, ymin = boot.lo, ymax = boot.hi, group = BirthMode, color = BirthMode, fill = BirthMode)) + 
+  geom_path(data = BW_sum, aes(x = TimePoint_Weeks, y = Mean, group = BirthMode)) + 
+  facet_grid(.~Sex,labeller = labeller(Sex = Sex_labs)) +
+  #just need to change weeks 3 - 15
+  scale_x_continuous(breaks = c(3:15)) + 
+  scale_color_manual(values = BirthMode_color, aesthetics = c("fill", "colour")) +
+  labs(x = "Age (Week)", y = "Body Weight (g)", title = "")
+
+#PLOT BW in 1.5 SD
+p1 = ggplot(BW, aes(x = TimePoint_Weeks, color = BirthMode)) +
+  geom_point(aes(y = Weight_g), size = 0.7, alpha = 0.7) +
+  geom_path(aes(y = Weight_g , group = MouseID), size = 0.3, alpha = 0.3) + 
+  geom_ribbon(data = BW_sum, alpha = 0.3, size = 0.1,
+              aes(x = TimePoint_Weeks, ymin = SD_lo, ymax = SD_hi, group = BirthMode, color = BirthMode, fill = BirthMode)) + 
+  geom_path(data = BW_sum, aes(x = TimePoint_Weeks, y = Mean, group = BirthMode)) + 
+  facet_grid(.~Sex,labeller = labeller(Sex = Sex_labs)) +
+  #just need to change weeks 3 - 15
+  scale_x_continuous(breaks = c(3:15)) + 
+  scale_color_manual(values = BirthMode_color, aesthetics = c("fill", "colour")) +
+  labs(x = "Age (Week)", y = "Body Weight (g)", title = "")
+
+## Body Weight gain relative to week 3 - Absolute & %
+#### summary
+BWgain= BW %>% filter(TimePoint_Weeks > 2) %>% arrange(MouseID, TimePoint_Weeks) %>% group_by(MouseID) %>% 
+  mutate(BW_gain = Weight_g - Weight_g[1], 
+         BW_gain_percent = (BW_gain/Weight_g[1]),
+         N = n()) %>% 
+  filter(TimePoint_Weeks > 3, N > 3)
+BWgain_sum <- BWgain %>% group_by(TimePoint_Weeks, BirthMode, Sex) %>% 
+  summarise(N = n(), 
+            Mean = mean(BW_gain),
+            SD = sd(BW_gain),
+            SD_lo = Mean-1.5*SD,
+            SD_hi = Mean+1.5*SD,
+            boot.lo = smean.cl.boot(BW_gain, conf.int = .95, B = 1000, na.rm = T, reps = F)[2],
+            boot.hi = smean.cl.boot(BW_gain, conf.int = .95, B = 1000, na.rm = T, reps = F)[3],
+            Mean_p = mean(BW_gain_percent), 
+            SD_p = sd(BW_gain_percent),
+            SD_p_lo = Mean_p-1.5*SD_p,
+            SD_p_hi = Mean_p+1.5*SD_p,
+            boot_p.lo = smean.cl.boot(BW_gain_percent, conf.int = .95, B = 1000, na.rm = T, reps = F)[2],
+            boot_p.hi = smean.cl.boot(BW_gain_percent, conf.int = .95, B = 1000, na.rm = T, reps = F)[3])
+
+#Ignore for now? 
+#BWgain_sum %>% mutate(Count = paste0(N, "(", N_family, ")")) %>% select(BirthMode, Sex, TimePoint_Weeks, Count) %>% spread(key = TimePoint_Weeks, value = Count) %>% kable()#
+
+#### plot BWgain in 95% CI
+p2 = ggplot(BWgain, aes(x = TimePoint_Weeks, color = BirthMode)) +
+  geom_point(aes(y = BW_gain),size = 0.5, alpha = 0.7) +
+  geom_path(aes(y = BW_gain, group = MouseID), size = 0.3, alpha = 0.2) +
+  geom_ribbon(data = BWgain_sum, alpha = 0.3, size = 0.1,
+              aes(x = TimePoint_Weeks, ymin = boot.lo, ymax = boot.hi, group = BirthMode, color = BirthMode, fill = BirthMode)) + 
+  #geom_text_repel(data = BWgain_sum, aes(x = TimePoint_Weeks, y = Mean, label = N), size = 3, show.legend = F) + 
+  geom_path(data = BWgain_sum, aes(x = TimePoint_Weeks, y = Mean, group = BirthMode)) + 
+  facet_grid(.~Sex,labeller = labeller(Sex = Sex_labs)) +
+  scale_x_continuous(breaks = c(4:18)) +
+  scale_color_manual(values = BirthMode_color, aesthetics = c("fill", "colour")) +
+  labs(x = "Age (Week)", y = "Body Weight gain (g)", title = "BW Gain (g)") 
+ggsave(filename = paste0(temp_out,"body_weight/body_weight_gain_overall.png"), plot = p,
+       width = 10, height = 5, units = "in", dpi = 300)
+
+#### plot BWgain in 1.5 SD
+p3 = ggplot(BWgain, aes(x = TimePoint_Weeks, color = BirthMode)) +
+  geom_point(aes(y = BW_gain),size = 0.5, alpha = 0.7) +
+  geom_path(aes(y = BW_gain, group = MouseID), size = 0.3, alpha = 0.2) +
+  geom_ribbon(data = BWgain_sum, alpha = 0.3, size = 0.1,
+              aes(x = TimePoint_Weeks, ymin = SD_lo, ymax = SD_hi, group = BirthMode, color = BirthMode, fill = BirthMode)) + 
+  #geom_text_repel(data = BWgain_sum, aes(x = TimePoint_Weeks, y = Mean, label = N), size = 3, show.legend = F) + 
+  geom_path(data = BWgain_sum, aes(x = TimePoint_Weeks, y = Mean, group = BirthMode)) + 
+  facet_grid(.~Sex,labeller = labeller(Sex = Sex_labs)) +
+  scale_x_continuous(breaks = c(4:18)) +
+  scale_color_manual(values = BirthMode_color, aesthetics = c("fill", "colour")) +
+  labs(x = "Age (Week)", y = "Body Weight gain (g)", title = "BW Gain (g)") 
+ggsave(filename = paste0(temp_out,"body_weight/body_weight_gain_overall.png"), plot = p,
+       width = 10, height = 5, units = "in", dpi = 300)
+
+#### plot BWgain percent in 95% CI
+p4 = ggplot(BWgain, aes(x = TimePoint_Weeks, color = BirthMode)) +
+  geom_point(aes(y = BW_gain_percent),size = 0.5, alpha = 0.7) +
+  geom_path(aes(y = BW_gain_percent, group = MouseID), size = 0.3, alpha = 0.2) +
+  geom_ribbon(data = BWgain_sum, alpha = 0.3, size = 0.1,
+              aes(x = TimePoint_Weeks, ymin = boot_p.lo, ymax = boot_p.hi, group = BirthMode, color = BirthMode, fill = BirthMode)) + 
+  #geom_text_repel(data = BWgain_sum, aes(x = TimePoint_Weeks, y = Mean_p, label = N), size = 3, show.legend = F) + 
+  geom_path(data = BWgain_sum, aes(x = TimePoint_Weeks, y = Mean_p, group = BirthMode)) +
+  facet_grid(.~Sex,labeller = labeller(Sex = Sex_labs)) +
+  scale_x_continuous(breaks = c(4:18)) +
+  scale_color_manual(values = BirthMode_color, aesthetics = c("fill", "colour")) +
+  labs(x = "Age (Week)", y = "Body Weight gain (100%)", title = "BW Gain % relative to Week 3") 
+
+#### plot BWgain percent in 1.5 SD
+p5 = ggplot(BWgain, aes(x = TimePoint_Weeks, color = BirthMode)) +
+  geom_point(aes(y = BW_gain_percent),size = 0.5, alpha = 0.7) +
+  geom_path(aes(y = BW_gain_percent, group = MouseID), size = 0.3, alpha = 0.2) +
+  geom_ribbon(data = BWgain_sum, alpha = 0.3, size = 0.1,
+              aes(x = TimePoint_Weeks, ymin = SD_p_lo, ymax = SD_p_hi, group = BirthMode, color = BirthMode, fill = BirthMode)) + 
+  #geom_text_repel(data = BWgain_sum, aes(x = TimePoint_Weeks, y = Mean_p, label = N), size = 3, show.legend = F) + 
+  geom_path(data = BWgain_sum, aes(x = TimePoint_Weeks, y = Mean_p, group = BirthMode)) +
+  facet_grid(.~Sex,labeller = labeller(Sex = Sex_labs)) +
+  scale_x_continuous(breaks = c(4:18)) +
+  scale_color_manual(values = BirthMode_color, aesthetics = c("fill", "colour")) +
+  labs(x = "Age (Week)", y = "Body Weight gain (100%)", title = "BW Gain % relative to Week 3") 
+
+### Plot CS against VD Groups in 95% CI
+p6 = ggplot(data = BW_sum, 
+            aes(x = TimePoint_Weeks, y = Mean, ymin = boot.lo, ymax = boot.hi, color = BirthMode)) + 
+  geom_line(data = BW_sum %>% filter(BirthMode == "CS"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BW_sum %>% filter(BirthMode == "CS"), aes(fill = BirthMode), alpha = 0.2) + 
+  geom_line(data = BW_sum %>% filter(BirthMode == "VD"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BW_sum %>% filter(BirthMode == "VD"), aes(fill = BirthMode), alpha = 0.2) + 
+  scale_x_continuous(breaks = c(1:18)) + 
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  facet_wrap(~Sex) +
+  labs(x = "Age (Week)", y = "Body Weight (g)", title = "Total Body Weight") 
+
+### Plot BW GAIN CS against VD Groups in 95% CI
+p7 = ggplot(data = BWgain, 
+            aes(x = TimePoint_Weeks, y = Mean, ymin = boot.lo, ymax = boot.hi, color = BirthMode)) + 
+  geom_line(data = BWgain_sum %>% filter(BirthMode == "CS"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BWgain_sum %>% filter(BirthMode == "CS"), aes(fill = BirthMode), alpha = 0.2) + 
+  geom_line(data = BWgain_sum %>% filter(BirthMode == "VD"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BWgain_sum %>% filter(BirthMode == "VD"), aes(fill = BirthMode), alpha = 0.2) + 
+  scale_x_continuous(breaks = c(1:18)) + 
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  facet_wrap(~Sex) +
+  labs(x = "Age (Week)", y = "Body Weight Gain (g)", title = "Body Weight Gain relative to Week 3") 
+
+### Plot BW GAIN Percent CS against VD Groups in 95% CI
+p8 = ggplot(data = BWgain, 
+            aes(x = TimePoint_Weeks, y = Mean_p, ymin = boot_p.lo, ymax = boot_p.hi, color = BirthMode)) + 
+  geom_line(data = BWgain_sum %>% filter(BirthMode == "CS"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BWgain_sum %>% filter(BirthMode == "CS"), aes(fill = BirthMode), alpha = 0.2) + 
+  geom_line(data = BWgain_sum %>% filter(BirthMode == "VD"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BWgain_sum %>% filter(BirthMode == "VD"), aes(fill = BirthMode), alpha = 0.2) + 
+  scale_x_continuous(breaks = c(1:18)) + 
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  facet_wrap(~Sex) +
+  labs(x = "Age (Week)", y = "Body Weight Gain (100%)", title = "BW Gain % relative to Week 3") 
+
+#next combine VD mean and CI shade and CS individuals,
+p9 = ggplot(data = BW_sum %>% filter(BirthMode == "VD"),
+            aes(x = TimePoint_Weeks, y = Mean, color = BirthMode)) + 
+  geom_line(aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(aes(ymin = boot.lo, ymax = boot.hi, fill = BirthMode), alpha = 0.2) +
+  #above use data set BW_sum
+  geom_point(data = BW %>% filter(BirthMode == "CS"), 
+             aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode),
+             size = 0.3, alpha = 0.3) + 
+  geom_line(data = BW %>% filter(BirthMode == "CS"), 
+            aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode, group = MouseID),
+            alpha = 0.3, size = 0.3) + 
+  #above use data set BW
+  scale_x_continuous(breaks = c(1:18)) + 
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  labs(x = "Age in Weeks", y = "Body Weight (g)") + 
+  facet_wrap(~Sex)
+
+#next combine VD mean and 1.5 SD shade and CS individuals,
+p10 = ggplot(data = BW_sum %>% filter(BirthMode == "VD"),
+            aes(x = TimePoint_Weeks, y = Mean, color = BirthMode)) + 
+  geom_line(aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(aes(ymin = SD_lo, ymax = SD_hi, fill = BirthMode), alpha = 0.2) +
+  #above use data set BW_sum
+  geom_point(data = BW %>% filter(BirthMode == "CS"), 
+             aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode),
+             size = 0.3, alpha = 0.3) + 
+  geom_line(data = BW %>% filter(BirthMode == "CS"), 
+            aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode, group = MouseID),
+            alpha = 0.3, size = 0.3) + 
+  #above use data set BW
+  scale_x_continuous(breaks = c(1:18)) + 
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  labs(x = "Age in Weeks", y = "Body Weight (g)") + 
+  facet_wrap(~Sex)
+
+#next combine VD mean and 1.5 SD shade and CS individuals BW GAIN,
+p12 = ggplot(data = BWgain_sum %>% filter(BirthMode == "VD"),
+             aes(x = TimePoint_Weeks, y = Mean, color = BirthMode)) + 
+  geom_line(aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(aes(ymin = SD_lo, ymax = SD_hi, fill = BirthMode), alpha = 0.2) +
+  #above use data set BWgain_sum
+  geom_point(data = BWgain %>% filter(BirthMode == "CS"), 
+             aes(x = TimePoint_Weeks, y = BW_gain, color = BirthMode),
+             size = 0.3, alpha = 0.3) + 
+  geom_line(data = BWgain %>% filter(BirthMode == "CS"), 
+            aes(x = TimePoint_Weeks, y = BW_gain, color = BirthMode, group = MouseID),
+            alpha = 0.3, size = 0.3) + 
+  #above use data set BWgain
+  scale_x_continuous(breaks = c(1:18)) + 
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  labs(x = "Age in Weeks", y = "Body Weight Gain (g)") + 
+  facet_wrap(~Sex)
+
+#VD mean and CI shade and CS individuals BW PERCENTAGE GAIN,
+p13 = ggplot(data = BWgain_sum %>% filter(BirthMode == "VD"),
+             aes(x = TimePoint_Weeks, y = Mean_p, color = BirthMode)) + 
+  geom_line(aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(aes(ymin = boot_p.lo, ymax = boot_p.hi, fill = BirthMode), alpha = 0.2) +
+  #above use data set BWgain_sum
+  geom_point(data = BWgain %>% filter(BirthMode == "CS"), 
+             aes(x = TimePoint_Weeks, y = BW_gain_percent, color = BirthMode),
+             size = 0.3, alpha = 0.3) + 
+  geom_line(data = BWgain %>% filter(BirthMode == "CS"), 
+            aes(x = TimePoint_Weeks, y = BW_gain_percent, color = BirthMode, group = MouseID),
+            alpha = 0.3, size = 0.3) + 
+  #above use data set BWgain
+  scale_x_continuous(breaks = c(1:18)) + 
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  labs(x = "Age in Weeks", y = "Body Weight Gain (100%)") + 
+  facet_wrap(~Sex)
+
+### Plot CSR against VD Groups in 95% CI
+p14 = ggplot(data = BW_sum, 
+            aes(x = TimePoint_Weeks, y = Mean, ymin = boot.lo, ymax = boot.hi, color = BirthMode)) + 
+  geom_line(data = BW_sum %>% filter(BirthMode == "CSR"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BW_sum %>% filter(BirthMode == "CSR"), aes(fill = BirthMode), alpha = 0.2) + 
+  geom_line(data = BW_sum %>% filter(BirthMode == "VD"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BW_sum %>% filter(BirthMode == "VD"), aes(fill = BirthMode), alpha = 0.2) + 
+  scale_x_continuous(breaks = c(1:18)) + 
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  facet_wrap(~Sex) +
+  labs(x = "Age (Week)", y = "Body Weight (g)", title = "Total Body Weight") 
+
+### Plot CS against VD Groups in 95% CI
+p15 = ggplot(data = BW_sum, 
+            aes(x = TimePoint_Weeks, y = Mean, ymin = boot.lo, ymax = boot.hi, color = BirthMode)) + 
+  geom_line(data = BW_sum %>% filter(BirthMode == "VF"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BW_sum %>% filter(BirthMode == "VF"), aes(fill = BirthMode), alpha = 0.2) + 
+  geom_line(data = BW_sum %>% filter(BirthMode == "VD"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BW_sum %>% filter(BirthMode == "VD"), aes(fill = BirthMode), alpha = 0.2) + 
+  scale_x_continuous(breaks = c(1:18)) + 
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  facet_wrap(~Sex) +
+  labs(x = "Age (Week)", y = "Body Weight (g)", title = "Total Body Weight") 
+
+### Plot BW GAIN CSR against VD Groups in 95% CI
+p16 = ggplot(data = BWgain, 
+            aes(x = TimePoint_Weeks, y = Mean, ymin = boot.lo, ymax = boot.hi, color = BirthMode)) + 
+  geom_line(data = BWgain_sum %>% filter(BirthMode == "CSR"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BWgain_sum %>% filter(BirthMode == "CSR"), aes(fill = BirthMode), alpha = 0.2) + 
+  geom_line(data = BWgain_sum %>% filter(BirthMode == "VD"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BWgain_sum %>% filter(BirthMode == "VD"), aes(fill = BirthMode), alpha = 0.2) + 
+  scale_x_continuous(breaks = c(1:18)) + 
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  facet_wrap(~Sex) +
+  labs(x = "Age (Week)", y = "Body Weight Gain (g)", title = "Body Weight Gain relative to Week 3") 
+
+### Plot BW GAIN VF against VD Groups in 95% CI
+p17 = ggplot(data = BWgain, 
+             aes(x = TimePoint_Weeks, y = Mean, ymin = boot.lo, ymax = boot.hi, color = BirthMode)) + 
+  geom_line(data = BWgain_sum %>% filter(BirthMode == "VF"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BWgain_sum %>% filter(BirthMode == "VF"), aes(fill = BirthMode), alpha = 0.2) + 
+  geom_line(data = BWgain_sum %>% filter(BirthMode == "VD"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BWgain_sum %>% filter(BirthMode == "VD"), aes(fill = BirthMode), alpha = 0.2) + 
+  scale_x_continuous(breaks = c(1:18)) + 
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  facet_wrap(~Sex) +
+  labs(x = "Age (Week)", y = "Body Weight Gain (g)", title = "Body Weight Gain relative to Week 3") 
+
+### Plot BW GAIN Percent CSR against VD Groups in 95% CI
+p18 = ggplot(data = BWgain, 
+            aes(x = TimePoint_Weeks, y = Mean_p, ymin = boot_p.lo, ymax = boot_p.hi, color = BirthMode)) + 
+  geom_line(data = BWgain_sum %>% filter(BirthMode == "CSR"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BWgain_sum %>% filter(BirthMode == "CSR"), aes(fill = BirthMode), alpha = 0.2) + 
+  geom_line(data = BWgain_sum %>% filter(BirthMode == "VD"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BWgain_sum %>% filter(BirthMode == "VD"), aes(fill = BirthMode), alpha = 0.2) + 
+  scale_x_continuous(breaks = c(1:18)) + 
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  facet_wrap(~Sex) +
+  labs(x = "Age (Week)", y = "Body Weight Gain (100%)", title = "BW Gain % relative to Week 3") 
+
+### Plot BW GAIN Percent VF against VD Groups in 95% CI
+p19 = ggplot(data = BWgain, 
+            aes(x = TimePoint_Weeks, y = Mean_p, ymin = boot_p.lo, ymax = boot_p.hi, color = BirthMode)) + 
+  geom_line(data = BWgain_sum %>% filter(BirthMode == "VF"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BWgain_sum %>% filter(BirthMode == "VF"), aes(fill = BirthMode), alpha = 0.2) + 
+  geom_line(data = BWgain_sum %>% filter(BirthMode == "VD"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BWgain_sum %>% filter(BirthMode == "VD"), aes(fill = BirthMode), alpha = 0.2) + 
+  scale_x_continuous(breaks = c(1:18)) + 
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  facet_wrap(~Sex) +
+  labs(x = "Age (Week)", y = "Body Weight Gain (100%)", title = "BW Gain % relative to Week 3") 
+
+### Plot BW GAIN Percent VF against VD Groups in 95% CI
+p20 = ggplot(data = BWgain, 
+             aes(x = TimePoint_Weeks, y = Mean_p, ymin = boot_p.lo, ymax = boot_p.hi, color = BirthMode)) + 
+  geom_line(data = BWgain_sum %>% filter(BirthMode == "VF"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BWgain_sum %>% filter(BirthMode == "VF"), aes(fill = BirthMode), alpha = 0.2) + 
+  geom_line(data = BWgain_sum %>% filter(BirthMode == "VD"), aes(group = BirthMode), size = 1.5) + 
+  geom_ribbon(data = BWgain_sum %>% filter(BirthMode == "VD"), aes(fill = BirthMode), alpha = 0.2) + 
+  scale_x_continuous(breaks = c(1:18)) + 
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  facet_wrap(~Sex) +
+  labs(x = "Age (Week)", y = "Body Weight Gain (100%)", title = "BW Gain % relative to Week 3") 
+
+
+###Calculate centiles directly from data
+BW %>% filter(TimePoint_Weeks == 15, Sex == "F") %>% pull(Weight_g) %>% quantile(probs = 0.8)
+
+BW %>% filter(TimePoint_Weeks == 15, Sex == "M") %>% pull(Weight_g) %>% quantile(probs = 0.8)
+
+BWgain %>% filter(TimePoint_Weeks == 15, Sex == "F") %>% pull(BW_gain) %>% quantile(probs = 0.8)
+
+BWgain %>% filter(TimePoint_Weeks == 15, Sex == "M") %>% pull(BW_gain) %>% quantile(probs = 0.8)
+
+BWgain %>% filter(TimePoint_Weeks == 15, Sex == "F") %>% pull(BW_gain_percent) %>% quantile(probs = 0.8)
+
+BWgain %>% filter(TimePoint_Weeks == 15, Sex == "M") %>% pull(BW_gain_percent) %>% quantile(probs = 0.8)
+
+## percentile
+library(gamlss)
+library(rsample)
+library(rlist)
+
+#Set sex
+BW_f = BW %>% filter(Sex == "F") %>% dplyr::select(Weight_g, TimePoint_Weeks)
+
+BW_M = BW %>% filter(Sex == "M") %>% dplyr::select(Weight_g, TimePoint_Weeks)
+
+## bootstrap
+set.seed(1)
+BW_bt_f = bootstraps(BW_f, times = 100)
+a1 = list()
+for(i in seq_along(BW_bt_f$splits)){
+  dat = as.data.frame(BW_bt_f$splits[[i]])
+  mod = gamlss(formula = Weight_g ~ pb(TimePoint_Weeks), 
+               sigma.formula = ~pb(TimePoint_Weeks), 
+               family = "BCT", 
+               data = dat,
+               trace=FALSE)
+  res = centiles.pred(mod, xname = "TimePoint_Weeks", xvalues = c(3:15), 
+                      cent=c(20, 50, 80))
+  res_long = res %>% pivot_longer(cols = !x, names_to = "centile")
+  a1 = list.append(a1, res_long)}
+
+b1 = do.call(rbind,a1)
+res_b1 = b1 %>% group_by(x, centile) %>% summarise(Mean = mean(value)) %>% ungroup() %>% pivot_wider(names_from = centile, values_from = Mean)
+
+set.seed(2)
+BW_bt_m = bootstraps(BW_M, times = 100)
+a2 = list()
+for(i in seq_along(BW_bt_m$splits)){
+  dat = as.data.frame(BW_bt_m$splits[[i]])
+  mod = gamlss(formula = Weight_g ~ pb(TimePoint_Weeks), 
+               sigma.formula = ~pb(TimePoint_Weeks), 
+               family = "BCT", 
+               data = dat,
+               trace=FALSE)
+  res = centiles.pred(mod, xname = "TimePoint_Weeks", xvalues = c(3:15), 
+                      cent=c(20, 50, 80))
+  res_long = res %>% pivot_longer(cols = !x, names_to = "centile")
+  a2 = list.append(a2, res_long)}
+
+b2 = do.call(rbind,a2)
+res_b2 = b2 %>% group_by(x, centile) %>% summarise(Mean = mean(value)) %>% ungroup() %>% pivot_wider(names_from = centile, values_from = Mean)
+
+
+## direct calculation
+
+BW_f %>% filter(TimePoint_Weeks == 15) %>% pull(Weight_g) %>% quantile(probs = c(0.2, 0.5, 0.8))
+
+BW_M %>% filter(TimePoint_Weeks == 15) %>% pull(Weight_g) %>% quantile(probs = c(0.2, 0.5, 0.8))
+
+## one time fit
+centile_f_model =  lms(Weight_g, TimePoint_Weeks, data = BW_f, families = "BCT")
+centiles.pred(centile_f_model, xname = "TimePoint_Weeks", xvalues = c(3:15), cent=c(20, 50, 80)) 
+
+centile_m_model =  lms(Weight_g, TimePoint_Weeks, data = BW_M, families = "BCT")
+centiles.pred(centile_m_model, xname = "TimePoint_Weeks", xvalues = c(3:15), cent=c(20, 50, 80)) 
+
+
+#plot individuals in 20th to 80th centile
+#CS Individuals
+p_cs_f = ggplot(data = res_b1,
+            aes(x = x, y = 50)) + 
+  geom_ribbon(aes(ymin = `20`, ymax = `80`), fill = "blue", alpha = 0.2) +
+  geom_line(data = res_b1 , aes(y = `20`), color = "#FBE5D6", size = 1.5, alpha = 0.5) +
+  geom_line(data = res_b1 , aes(y = `50`), color = "#4472C4", size = 1.5, alpha = 0.5) +
+  geom_line(data = res_b1 , aes(y = `80`), color = "#FA0000", size = 1.5, alpha = 0.5) +
+  #above use data set res_b1
+  geom_point(data = BW %>% filter(BirthMode == "CS", Sex == "F"), 
+             aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode),
+             size = 0.3, alpha = 0.3) + 
+  geom_line(data = BW %>% filter(BirthMode == "CS", Sex == "F"), 
+            aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode, group = MouseID),
+            alpha = 0.3, size = 0.3) + 
+  #above use data set BW
+  scale_x_continuous(breaks = c(1:18)) + 
+  ylim(0, 60) +
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  labs(x = "Age in Weeks", y = "Body Weight (g)")  
+
+p_cs_m = ggplot(data = res_b2,
+                aes(x = x, y = 50)) + 
+  geom_ribbon(aes(ymin = `20`, ymax = `80`), fill = "blue", alpha = 0.2) +
+  geom_line(data = res_b2 , aes(y = `20`), color = "#FBE5D6", size = 1.5, alpha = 0.5) +
+  geom_line(data = res_b2 , aes(y = `50`), color = "#4472C4", size = 1.5, alpha = 0.5) +
+  geom_line(data = res_b2 , aes(y = `80`), color = "#FA0000", size = 1.5, alpha = 0.5) +
+  #above use data set res_b2
+  geom_point(data = BW %>% filter(BirthMode == "CS", Sex == "M"), 
+             aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode),
+             size = 0.3, alpha = 0.3) + 
+  geom_line(data = BW %>% filter(BirthMode == "CS", Sex == "M"), 
+            aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode, group = MouseID),
+            alpha = 0.3, size = 0.3) + 
+  #above use data set BW
+  scale_x_continuous(breaks = c(1:18)) + 
+  ylim(0, 60) +
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  labs(x = "Age in Weeks", y = "Body Weight (g)") 
+
+#CSR Individuals
+p_csr_f = ggplot(data = res_b1,
+                aes(x = x, y = 50)) + 
+  geom_ribbon(aes(ymin = `20`, ymax = `80`), fill = "blue", alpha = 0.2) +
+  geom_line(data = res_b1 , aes(y = `20`), color = "#FBE5D6", size = 1.5, alpha = 0.5) +
+  geom_line(data = res_b1 , aes(y = `50`), color = "#4472C4", size = 1.5, alpha = 0.5) +
+  geom_line(data = res_b1 , aes(y = `80`), color = "#FA0000", size = 1.5, alpha = 0.5) +
+  #above use data set res_b1
+  geom_point(data = BW %>% filter(BirthMode == "CSR", Sex == "F"), 
+             aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode),
+             size = 0.3, alpha = 0.3) + 
+  geom_line(data = BW %>% filter(BirthMode == "CSR", Sex == "F"), 
+            aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode, group = MouseID),
+            alpha = 0.3, size = 0.3) + 
+  #above use data set BW
+  scale_x_continuous(breaks = c(1:18)) + 
+  ylim(0, 60) +
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  labs(x = "Age in Weeks", y = "Body Weight (g)")  
+
+p_csr_m = ggplot(data = res_b2,
+                aes(x = x, y = 50)) + 
+  geom_ribbon(aes(ymin = `20`, ymax = `80`), fill = "blue", alpha = 0.2) +
+  geom_line(data = res_b2 , aes(y = `20`), color = "#FBE5D6", size = 1.5, alpha = 0.5) +
+  geom_line(data = res_b2 , aes(y = `50`), color = "#4472C4", size = 1.5, alpha = 0.5) +
+  geom_line(data = res_b2 , aes(y = `80`), color = "#FA0000", size = 1.5, alpha = 0.5) +
+  #above use data set res_b2
+  geom_point(data = BW %>% filter(BirthMode == "CSR", Sex == "M"), 
+             aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode),
+             size = 0.3, alpha = 0.3) + 
+  geom_line(data = BW %>% filter(BirthMode == "CSR", Sex == "M"), 
+            aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode, group = MouseID),
+            alpha = 0.3, size = 0.3) + 
+  #above use data set BW
+  scale_x_continuous(breaks = c(1:18)) + 
+  ylim(0, 60) +
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  labs(x = "Age in Weeks", y = "Body Weight (g)") 
+
+#VF Individuals
+p_vf_f = ggplot(data = res_b1,
+                 aes(x = x, y = 50)) + 
+  geom_ribbon(aes(ymin = `20`, ymax = `80`), fill = "blue", alpha = 0.2) +
+  geom_line(data = res_b1 , aes(y = `20`), color = "#FBE5D6", size = 1.5, alpha = 0.5) +
+  geom_line(data = res_b1 , aes(y = `50`), color = "#4472C4", size = 1.5, alpha = 0.5) +
+  geom_line(data = res_b1 , aes(y = `80`), color = "#FA0000", size = 1.5, alpha = 0.5) +
+  #above use data set res_b1
+  geom_point(data = BW %>% filter(BirthMode == "VF", Sex == "F"), 
+             aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode),
+             size = 0.3, alpha = 0.3) + 
+  geom_line(data = BW %>% filter(BirthMode == "VF", Sex == "F"), 
+            aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode, group = MouseID),
+            alpha = 0.3, size = 0.3) + 
+  #above use data set BW
+  scale_x_continuous(breaks = c(1:18)) + 
+  ylim(0, 60) +
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  labs(x = "Age in Weeks", y = "Body Weight (g)")  
+
+p_vf_m = ggplot(data = res_b2,
+                 aes(x = x, y = 50)) + 
+  geom_ribbon(aes(ymin = `20`, ymax = `80`), fill = "blue", alpha = 0.2) +
+  geom_line(data = res_b2 , aes(y = `20`), color = "#FBE5D6", size = 1.5, alpha = 0.5) +
+  geom_line(data = res_b2 , aes(y = `50`), color = "#4472C4", size = 1.5, alpha = 0.5) +
+  geom_line(data = res_b2 , aes(y = `80`), color = "#FA0000", size = 1.5, alpha = 0.5) +
+  #above use data set res_b2
+  geom_point(data = BW %>% filter(BirthMode == "VF", Sex == "M"), 
+             aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode),
+             size = 0.3, alpha = 0.3) + 
+  geom_line(data = BW %>% filter(BirthMode == "VF", Sex == "M"), 
+            aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode, group = MouseID),
+            alpha = 0.3, size = 0.3) + 
+  #above use data set BW
+  scale_x_continuous(breaks = c(1:18)) + 
+  ylim(0, 60) +
+  scale_color_manual(values = BirthMode_color, aesthetics = c("colour", "fill")) + 
+  labs(x = "Age in Weeks", y = "Body Weight (g)") 
